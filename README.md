@@ -77,25 +77,19 @@ Click the **Deploy to Cloudflare** button at the top of this README.
    npx wrangler login
    ```
 
-3. **Build for Cloudflare**:
-
-   ```bash
-   npm run pages:build
-   ```
-
-4. **Preview locally** (optional):
+3. **Preview locally** (optional):
 
    ```bash
    npm run preview
    ```
 
-5. **Deploy**:
+4. **Build & Deploy**:
 
    ```bash
    npm run deploy
    ```
 
-   First-time deploy will create a new Pages project. Subsequent deploys update it.
+   This runs `next build`, bundles for Cloudflare Workers, and deploys in one command.
 
 ### Option 3: GitHub Actions (Auto-Deploy)
 
