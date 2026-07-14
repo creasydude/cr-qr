@@ -1,12 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useRef, Fragment } from "react";
+import { useState, useRef, Fragment, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { QRCodeSVG } from "qrcode.react";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useDebounceValue } from "usehooks-ts";
 import { ColorPicker } from "@/components/colorPicker";
+import {
+  QrCodeStyler,
+  downloadStyledQr,
+  stylePresets,
+  type StylePreset,
+} from "@/components/qrCodeStyler";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -16,14 +30,43 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle, Eye, EyeOff } from "lucide-react";
 
 const RandomPoints = dynamic(
   () => import("@/components/randomPoints").then((mod) => mod.RandomPoints),
   { ssr: false }
 );
 
+type QrType = "url" | "text" | "wifi";
+type EncryptionType = "WPA" | "WEP" | "NONE";
+
+function escapeWifiField(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/,/g, "\\,").replace(/;/g, "\\;").replace(/:/g, "\\:");
+}
+
+function buildWifiPayload(
+  ssid: string,
+  password: string,
+  encryption: EncryptionType,
+  hidden: boolean
+): string {
+  let payload = "WIFI:";
+  if (encryption !== "NONE") {
+    payload += `T:${encryption};`;
+  }
+  payload += `S:${escapeWifiField(ssid)};`;
+  if (encryption !== "NONE") {
+    payload += `P:${escapeWifiField(password)};`;
+  }
+  if (hidden) {
+    payload += "H:true;";
+  }
+  payload += ";";
+  return payload;
+}
+
 export default function Home() {
+  const [qrType, setQrType] = useState<QrType>("url");
   const [qrData, setQrData] = useState("");
   const [qrColor, setQrColor] = useState("#000000");
   const [bgColor, setBgColor] = useState("#ffffff");
@@ -32,7 +75,23 @@ export default function Home() {
   const qrRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [debouncedQrData] = useDebounceValue(qrData, 500);
+  // WiFi form state
+  const [wifiSsid, setWifiSsid] = useState("");
+  const [wifiPassword, setWifiPassword] = useState("");
+  const [wifiEncryption, setWifiEncryption] = useState<EncryptionType>("WPA");
+  const [wifiHidden, setWifiHidden] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [activeStyle, setActiveStyle] = useState<StylePreset>(stylePresets[0]);
+
+  const qrPayload = useMemo(() => {
+    if (qrType === "url" || qrType === "text") {
+      return qrData;
+    }
+    if (!wifiSsid) return "";
+    return buildWifiPayload(wifiSsid, wifiPassword, wifiEncryption, wifiHidden);
+  }, [qrType, qrData, wifiSsid, wifiPassword, wifiEncryption, wifiHidden]);
+
+  const [debouncedQrData] = useDebounceValue(qrPayload, 500);
   const [debouncedQrColor] = useDebounceValue(qrColor, 500);
   const [debouncedBgColor] = useDebounceValue(bgColor, 500);
 
@@ -56,75 +115,7 @@ export default function Home() {
 
   const downloadQR = (type: "svg" | "png") => {
     if (!qrRef.current || !debouncedQrData) return;
-
-    const svg = qrRef.current.querySelector("svg");
-    if (!svg) return;
-
-    const svgClone = svg.cloneNode(true) as SVGElement;
-    const padding = 32;
-    const originalWidth = parseInt(svgClone.getAttribute("width") || "250");
-    const originalHeight = parseInt(svgClone.getAttribute("height") || "250");
-    const totalWidth = originalWidth + padding * 2;
-    const totalHeight = originalHeight + padding * 2;
-
-    const wrapperSvg = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "svg"
-    );
-    wrapperSvg.setAttribute("width", totalWidth.toString());
-    wrapperSvg.setAttribute("height", totalHeight.toString());
-    wrapperSvg.setAttribute("viewBox", `0 0 ${totalWidth} ${totalHeight}`);
-
-    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("width", totalWidth.toString());
-    rect.setAttribute("height", totalHeight.toString());
-    rect.setAttribute("fill", debouncedBgColor);
-    rect.setAttribute("rx", "8");
-
-    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    g.setAttribute("transform", `translate(${padding},${padding})`);
-    g.appendChild(svgClone);
-
-    wrapperSvg.appendChild(rect);
-    wrapperSvg.appendChild(g);
-
-    if (type === "svg") {
-      const svgData = new XMLSerializer().serializeToString(wrapperSvg);
-      const svgBlob = new Blob([svgData], {
-        type: "image/svg+xml;charset=utf-8",
-      });
-      const svgUrl = URL.createObjectURL(svgBlob);
-      const downloadLink = document.createElement("a");
-      downloadLink.href = svgUrl;
-      downloadLink.download = "qr-code.svg";
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      document.body.removeChild(downloadLink);
-      URL.revokeObjectURL(svgUrl);
-      return;
-    }
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-    const svgData = new XMLSerializer().serializeToString(wrapperSvg);
-    const svgBlob = new Blob([svgData], {
-      type: "image/svg+xml;charset=utf-8",
-    });
-    const svgUrl = URL.createObjectURL(svgBlob);
-    img.onload = () => {
-      canvas.width = totalWidth;
-      canvas.height = totalHeight;
-      ctx?.drawImage(img, 0, 0);
-      const pngUrl = canvas.toDataURL("image/png");
-      const downloadLink = document.createElement("a");
-      downloadLink.href = pngUrl;
-      downloadLink.download = "qr-code.png";
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      document.body.removeChild(downloadLink);
-      URL.revokeObjectURL(svgUrl);
-    };
-    img.src = svgUrl;
+    downloadStyledQr(qrRef.current, type);
   };
 
   return (
@@ -142,11 +133,6 @@ export default function Home() {
           transition={{ delay: 0.2 }}
           className="flex gap-2 items-center"
         >
-          <motion.div
-            whileHover={{ rotate: 360 }}
-            transition={{ duration: 0.5 }}
-            className="min-w-7 h-7 bg-pink-500 rounded-full"
-          />
           <div className="flex gap-x-2 flex-wrap">
             <p className="text-xs font-mono">
               Crafted by
@@ -156,6 +142,15 @@ export default function Home() {
                 className="ml-2 font-bold text-pink-500"
               >
                 Kas Ferreira
+              </Link>
+              <span className="mx-1">&middot;</span>
+              Tweaked by
+              <Link
+                target="_blank"
+                href="https://github.com/creasydude"
+                className="ml-2 font-bold text-pink-500"
+              >
+                creasydude
               </Link>
             </p>
           </div>
@@ -167,6 +162,30 @@ export default function Home() {
           className="flex flex-col gap-8 bg-white/5 rounded-md p-5 min-w-[300px]"
         >
           <div className="flex flex-col gap-4">
+            {/* QR Type Selector */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35 }}
+            >
+              <ToggleGroup
+                type="single"
+                value={qrType}
+                onValueChange={(value) => value && setQrType(value as QrType)}
+                className="justify-center"
+              >
+                <ToggleGroupItem value="url" aria-label="URL">
+                  URL
+                </ToggleGroupItem>
+                <ToggleGroupItem value="text" aria-label="Text">
+                  Text
+                </ToggleGroupItem>
+                <ToggleGroupItem value="wifi" aria-label="WiFi">
+                  WiFi
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </motion.div>
+
             <motion.div
               ref={qrRef}
               style={{ backgroundColor: debouncedBgColor }}
@@ -183,22 +202,14 @@ export default function Home() {
                     exit={{ opacity: 0, scale: 0.8 }}
                     transition={{ type: "spring", duration: 0.5 }}
                   >
-                    <QRCodeSVG
+                    <QrCodeStyler
                       value={debouncedQrData}
                       size={250}
                       fgColor={debouncedQrColor}
                       bgColor={debouncedBgColor}
-                      level={errorLevel}
-                      imageSettings={
-                        logo
-                          ? {
-                              src: logo,
-                              height: 40,
-                              width: 40,
-                              excavate: true,
-                            }
-                          : undefined
-                      }
+                      errorCorrection={errorLevel}
+                      stylePreset={activeStyle}
+                      logo={logo}
                     />
                     <Button
                       variant="secondary"
@@ -240,17 +251,93 @@ export default function Home() {
                 )}
               </AnimatePresence>
             </motion.div>
+
+            {/* Input Area */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
             >
-              <Input
-                placeholder="Enter your URL or text"
-                value={qrData}
-                onChange={(e) => setQrData(e.target.value)}
-                className="border-none md:text-lg p-0 text-center bg-transparent shadow-none outline-none focus:outline-none w-full"
-              />
+              {qrType === "wifi" ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="font-semibold text-xs opacity-50">
+                      SSID
+                    </Label>
+                    <Input
+                      placeholder="Network name"
+                      value={wifiSsid}
+                      onChange={(e) => setWifiSsid(e.target.value)}
+                      className="border-none md:text-lg p-0 text-center bg-transparent shadow-none outline-none focus:outline-none w-full"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="font-semibold text-xs opacity-50">
+                      Password
+                    </Label>
+                    <div className="relative flex items-center">
+                      <Input
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Password"
+                        value={wifiPassword}
+                        onChange={(e) => setWifiPassword(e.target.value)}
+                        className="border-none md:text-lg p-0 text-center bg-transparent shadow-none outline-none focus:outline-none w-full pr-8"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="font-semibold text-xs opacity-50">
+                      Encryption
+                    </Label>
+                    <Select
+                      value={wifiEncryption}
+                      onValueChange={(value) =>
+                        setWifiEncryption(value as EncryptionType)
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="WPA">WPA/WPA2/WPA3</SelectItem>
+                        <SelectItem value="WEP">WEP</SelectItem>
+                        <SelectItem value="NONE">None</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label className="font-semibold text-xs opacity-50">
+                      Hidden network
+                    </Label>
+                    <Switch
+                      checked={wifiHidden}
+                      onCheckedChange={setWifiHidden}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <Input
+                  placeholder={
+                    qrType === "url"
+                      ? "Enter your URL"
+                      : "Enter your text"
+                  }
+                  value={qrData}
+                  onChange={(e) => setQrData(e.target.value)}
+                  className="border-none md:text-lg p-0 text-center bg-transparent shadow-none outline-none focus:outline-none w-full"
+                />
+              )}
             </motion.div>
           </div>
 
@@ -286,6 +373,29 @@ export default function Home() {
                     onChange={setBgColor}
                     presetColors={presetColors}
                   />
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="flex flex-col gap-2"
+                >
+                  <h3 className="font-semibold text-xs opacity-50">Style</h3>
+                  <div className="flex gap-2 flex-wrap">
+                    {stylePresets.map((preset) => (
+                      <button
+                        key={preset.name}
+                        onClick={() => setActiveStyle(preset)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                          activeStyle.name === preset.name
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                        }`}
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
                 </motion.div>
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
